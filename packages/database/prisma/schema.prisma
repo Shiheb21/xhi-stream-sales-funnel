@@ -14,28 +14,43 @@ datasource db {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// UserSettings — Stores global user preferences, e.g. export targets
+// ─────────────────────────────────────────────────────────────────────────
+model UserSettings {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  autoExportGsheet  Boolean  @default(false)
+  autoExportCsv     Boolean  @default(false)
+  notificationEmail String?
+  gsheetId          String?
+  updatedAt         DateTime @updatedAt
+  
+  @@map("user_settings")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Lead — Core entity. Each record is a phone number extracted from a
 // live stream comment. Deduplication via unique_hash (MD5 of platform +
 // comment_id) ensures no comment is processed twice.
 // ─────────────────────────────────────────────────────────────────────────
 model Lead {
-  id              String    @id @default(cuid())
-  phoneNumber     String    @map("phone_number")
-  rawComment      String    @map("raw_comment") @db.Text
-  platform        String    // e.g. "tiktok", "instagram", "facebook"
-  commentId       String    @map("comment_id")
-  uniqueHash      String    @unique @map("unique_hash") // MD5(platform + comment_id)
-  confidenceScore Float     @default(0) @map("confidence_score")
-  countryCode     String?   @map("country_code") @db.VarChar(5)
+  id              String     @id @default(cuid())
+  phoneNumber     String     @map("phone_number")
+  rawComment      String     @map("raw_comment") @db.Text
+  platform        String // e.g. "tiktok", "instagram", "facebook"
+  commentId       String     @map("comment_id")
+  uniqueHash      String     @unique @map("unique_hash") // MD5(platform + comment_id)
+  confidenceScore Float      @default(0) @map("confidence_score")
+  countryCode     String?    @map("country_code") @db.VarChar(5)
   status          LeadStatus @default(NEW)
-  source          String?   // stream URL or identifier
-  extractedAt     DateTime  @default(now()) @map("extracted_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  source          String? // stream URL or identifier
+  extractedAt     DateTime   @default(now()) @map("extracted_at")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
 
   // Relations
-  sessionId       String?   @map("session_id")
-  session         LiveSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  sessionId String?      @map("session_id")
+  session   LiveSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
 
   @@index([phoneNumber], name: "idx_lead_phone_number")
   @@index([createdAt], name: "idx_lead_created_at")
@@ -58,21 +73,21 @@ enum LeadStatus {
 // Links to AdAttribution to track which ad campaign drove the viewers.
 // ─────────────────────────────────────────────────────────────────────────
 model LiveSession {
-  id            String    @id @default(cuid())
-  platform      String    // "tiktok", "instagram", "facebook"
-  streamUrl     String    @map("stream_url")
-  streamerName  String?   @map("streamer_name")
-  startedAt     DateTime  @default(now()) @map("started_at")
-  endedAt       DateTime? @map("ended_at")
+  id            String        @id @default(cuid())
+  platform      String // "tiktok", "instagram", "facebook"
+  streamUrl     String        @map("stream_url")
+  streamerName  String?       @map("streamer_name")
+  startedAt     DateTime      @default(now()) @map("started_at")
+  endedAt       DateTime?     @map("ended_at")
   status        SessionStatus @default(ACTIVE)
-  totalComments Int       @default(0) @map("total_comments")
-  totalLeads    Int       @default(0) @map("total_leads")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  totalComments Int           @default(0) @map("total_comments")
+  totalLeads    Int           @default(0) @map("total_leads")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
 
   // Relations
-  leads         Lead[]
-  attribution   AdAttribution?
+  leads       Lead[]
+  attribution AdAttribution?
 
   @@index([platform, status], name: "idx_session_platform_status")
   @@index([startedAt], name: "idx_session_started_at")
@@ -91,22 +106,22 @@ enum SessionStatus {
 // Enables ROI calculation: ad spend vs leads generated.
 // ─────────────────────────────────────────────────────────────────────────
 model AdAttribution {
-  id            String    @id @default(cuid())
-  campaignId    String    @map("campaign_id")
-  campaignName  String    @map("campaign_name")
-  adSetId       String?   @map("ad_set_id")
-  adSetName     String?   @map("ad_set_name")
-  platform      String    // "meta", "tiktok_ads", "google_ads"
-  spend         Float     @default(0)
-  currency      String    @default("USD") @db.VarChar(3)
-  impressions   Int       @default(0)
-  clicks        Int       @default(0)
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id           String   @id @default(cuid())
+  campaignId   String   @map("campaign_id")
+  campaignName String   @map("campaign_name")
+  adSetId      String?  @map("ad_set_id")
+  adSetName    String?  @map("ad_set_name")
+  platform     String // "meta", "tiktok_ads", "google_ads"
+  spend        Float    @default(0)
+  currency     String   @default("USD") @db.VarChar(3)
+  impressions  Int      @default(0)
+  clicks       Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   // Relations
-  sessionId     String    @unique @map("session_id")
-  session       LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId String      @unique @map("session_id")
+  session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([campaignId], name: "idx_attribution_campaign")
   @@index([platform], name: "idx_attribution_platform")

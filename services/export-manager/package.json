@@ -1,0 +1,22 @@
+{
+  "name": "@xhi/export-manager",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@xhi/database": "workspace:*",
+    "fastify": "^4.26.2",
+    "dotenv": "^16.4.5",
+    "json2csv": "^6.0.0-alpha.2",
+    "pdfkit": "^0.15.0",
+    "google-spreadsheet": "^4.1.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/pdfkit": "^0.13.4"
+  }
+}
