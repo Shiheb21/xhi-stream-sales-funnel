@@ -29,7 +29,7 @@ services:
       -c work_mem=1310kB
       -c min_wal_size=1GB
       -c max_wal_size=4GB
-      -c synchronous_commit=on
+      -c synchronous_commit=off
       -c wal_level=logical
     volumes:
       - pg_prod_data:/var/lib/postgresql/data
