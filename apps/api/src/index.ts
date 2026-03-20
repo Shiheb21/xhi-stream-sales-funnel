@@ -77,15 +77,56 @@ export async function setupWebSockets() {
   return io;
 }
 
+import winston from 'winston';
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: '/var/log/xhi-funnel.log' })
+  ]
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
-// Export Core API
+// Health Check & Export API
 // ═══════════════════════════════════════════════════════════════════════════
 
 const { Worker } = require('worker_threads');
 const path = require('path');
-// Mocks for Prisma and Engine until package boundary setup finishes compilation
 import { prisma } from '@xhi/database';
 import { generateCsv, generatePdf, syncGoogleSheets } from '@xhi/export-engine';
+
+app.get('/api/v1/status', async (req, reply) => {
+  logger.info('Health map requested');
+  let pgStatus = 'offline';
+  let redisStatus = 'offline';
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    pgStatus = 'online';
+  } catch (e) {
+    logger.error(`Postgres Ping Failed: ${e}`);
+  }
+
+  try {
+    const pubClient = new Redis({ host: process.env.REDIS_HOST, port: 6379 });
+    const ping = await pubClient.ping();
+    if (ping === 'PONG') redisStatus = 'online';
+    pubClient.disconnect();
+  } catch (e) {
+    logger.error(`Redis Ping Failed: ${e}`);
+  }
+
+  return reply.send({
+    postgres: pgStatus,
+    redis: redisStatus,
+    streamMonitor: 'managed_by_pm2' 
+  });
+});
 
 app.get('/export/:sessionId', async (req, reply) => {
   const { sessionId } = req.params as { sessionId: string };
