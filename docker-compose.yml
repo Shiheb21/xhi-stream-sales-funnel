@@ -192,6 +192,46 @@ services:
       - xhi-network
 
   # ═══════════════════════════════════════════════════════════════════════════
+  # Ads Tracking (Phase 3)
+  # ═══════════════════════════════════════════════════════════════════════════
+  ads-tracking:
+    build:
+      context: .
+      dockerfile: services/ads-tracking/Dockerfile
+    container_name: xhi-ads-tracking
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://xhi_admin:${POSTGRES_PASSWORD:-xhi_secret_2026}@postgres:5432/xhi_leads?schema=public
+      PORT: 3002
+      META_ACCESS_TOKEN: ${META_ACCESS_TOKEN}
+      TIKTOK_ACCESS_TOKEN: ${TIKTOK_ACCESS_TOKEN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - xhi-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Stream Monitor & Restarter (Phase 3)
+  # ═══════════════════════════════════════════════════════════════════════════
+  stream-monitor:
+    build:
+      context: .
+      dockerfile: services/stream-monitor/Dockerfile
+    container_name: xhi-stream-monitor
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      NODE_ENV: production
+      PORT: 3003
+    networks:
+      - xhi-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
   # NGINX — Reverse Proxy
   # ═══════════════════════════════════════════════════════════════════════════
   nginx:
