@@ -1,0 +1,20 @@
+# xhi-stream-sales-funnel: Phase 1 Speckit Definition
+
+name: xhi-stream-sales-funnel
+version: 1.0.0
+description: High-throughput lead processing and extraction backend for live stream chat integration.
+infrastructure:
+  - Docker Compose: postgres, redis-master, redis-replica, nginx
+services:
+  - id: lead-processor
+    type: worker
+    description: Stream processing engine to process live comments and extract valid leads via the `@xhi/lead-extraction`.
+    healthcheck: "/health"
+  - id: api-gateway
+    type: web
+    description: Initial proxy/entrypoint for client applications.
+    healthcheck: "/health"
+standards:
+  - Modular monorepo with Turborepo
+  - Fully typed TypeScript 5.x
+  - Services export a "/health" endpoint for docker/k8s orchestrators

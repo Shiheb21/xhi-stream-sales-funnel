@@ -1,0 +1,236 @@
+##############################################################################
+# XHI Stream Sales Funnel — Docker Compose (Phase 1)
+# Infrastructure: PostgreSQL · Redis (Master/Replica) · NGINX Reverse Proxy
+##############################################################################
+
+version: "3.9"
+
+services:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PostgreSQL — High-write optimised
+  # ═══════════════════════════════════════════════════════════════════════════
+  postgres:
+    image: postgres:16-alpine
+    container_name: xhi-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: xhi_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-xhi_secret_2026}
+      POSTGRES_DB: xhi_leads
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    command:
+      - "postgres"
+      - "-c" 
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=768MB"
+      - "-c"
+      - "work_mem=4MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "synchronous_commit=off"
+      - "-c"
+      - "log_min_duration_statement=200"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xhi_admin -d xhi_leads"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - xhi-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Redis Master — Streams + Caching
+  # ═══════════════════════════════════════════════════════════════════════════
+  redis-master:
+    image: bitnami/redis:7.2
+    container_name: xhi-redis-master
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-xhi_redis_2026}
+      REDIS_REPLICATION_MODE: master
+      REDIS_AOF_ENABLED: "yes"
+      REDIS_MAXMEMORY: 512mb
+      REDIS_MAXMEMORY_POLICY: noeviction
+    volumes:
+      - redis_master_data:/bitnami/redis/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-xhi_redis_2026}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - xhi-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Redis Replica — Read scaling
+  # ═══════════════════════════════════════════════════════════════════════════
+  redis-replica:
+    image: bitnami/redis:7.2
+    container_name: xhi-redis-replica
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-xhi_redis_2026}
+      REDIS_REPLICATION_MODE: replica
+      REDIS_MASTER_HOST: redis-master
+      REDIS_MASTER_PORT_NUMBER: 6379
+      REDIS_MASTER_PASSWORD: ${REDIS_PASSWORD:-xhi_redis_2026}
+    volumes:
+      - redis_replica_data:/bitnami/redis/data
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    networks:
+      - xhi-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Redis Stream Initializer — Create comment_stream with MAXLEN cap
+  # ═══════════════════════════════════════════════════════════════════════════
+  redis-init:
+    image: bitnami/redis:7.2
+    container_name: xhi-redis-init
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    entrypoint: >
+      bash -c "
+        echo 'Initializing Redis Streams...' &&
+        redis-cli -h redis-master -a $${REDIS_PASSWORD} XGROUP CREATE comment_stream lead_processor_group $$ MKSTREAM 2>/dev/null || true &&
+        redis-cli -h redis-master -a $${REDIS_PASSWORD} XTRIM comment_stream MAXLEN ~ 100000 &&
+        echo 'Redis Streams initialized successfully.'
+      "
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-xhi_redis_2026}
+    restart: "no"
+    networks:
+      - xhi-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Lead Processor — Fastify batch service
+  # ═══════════════════════════════════════════════════════════════════════════
+  lead-processor:
+    build:
+      context: .
+      dockerfile: services/lead-processor/Dockerfile
+    container_name: xhi-lead-processor
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://xhi_admin:${POSTGRES_PASSWORD:-xhi_secret_2026}@postgres:5432/xhi_leads?schema=public
+      REDIS_HOST: redis-master
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-xhi_redis_2026}
+      BATCH_SIZE: 200
+      FLUSH_INTERVAL_MS: 5000
+      PORT: 3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+      redis-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - xhi-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # API Gateway — Fastify (placeholder for Phase 2)
+  # ═══════════════════════════════════════════════════════════════════════════
+  api-gateway:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: xhi-api-gateway
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://xhi_admin:${POSTGRES_PASSWORD:-xhi_secret_2026}@postgres:5432/xhi_leads?schema=public
+      REDIS_HOST: redis-master
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-xhi_redis_2026}
+      PORT: 3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - xhi-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # NGINX — Reverse Proxy
+  # ═══════════════════════════════════════════════════════════════════════════
+  nginx:
+    image: nginx:alpine
+    container_name: xhi-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+      lead-processor:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - xhi-network
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Volumes
+# ═════════════════════════════════════════════════════════════════════════════
+volumes:
+  pg_data:
+    driver: local
+  redis_master_data:
+    driver: local
+  redis_replica_data:
+    driver: local
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Networks
+# ═════════════════════════════════════════════════════════════════════════════
+networks:
+  xhi-network:
+    driver: bridge
+    name: xhi-network
