@@ -3,8 +3,6 @@
 # Infrastructure: PostgreSQL · Redis (Master/Replica) · NGINX Reverse Proxy
 ##############################################################################
 
-version: "3.9"
-
 services:
   # ═══════════════════════════════════════════════════════════════════════════
   # PostgreSQL — High-write optimised
@@ -56,25 +54,14 @@ services:
   # Redis Master — Streams + Caching
   # ═══════════════════════════════════════════════════════════════════════════
   redis-master:
-    image: bitnami/redis:7.2
+    image: redis:7-alpine
     container_name: xhi-redis-master
     restart: unless-stopped
     ports:
       - "6379:6379"
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-xhi_redis_2026}
-      REDIS_REPLICATION_MODE: master
-      REDIS_AOF_ENABLED: "yes"
-      REDIS_MAXMEMORY: 512mb
-      REDIS_MAXMEMORY_POLICY: noeviction
+    command: redis-server --requirepass ${REDIS_PASSWORD:-xhi_redis_2026}
     volumes:
-      - redis_master_data:/bitnami/redis/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-xhi_redis_2026}", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      - redis_master_data:/data
     networks:
       - xhi-network
 
