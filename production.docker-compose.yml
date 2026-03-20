@@ -1,0 +1,161 @@
+version: '3.8'
+
+# XHI Production Orchestrator
+# Optimized for high disk I/O, no dev volumes, WAL tuning for PostgreSQL.
+
+services:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PostgreSQL 16 (The Core DB) — WAL Optimized
+  # ═══════════════════════════════════════════════════════════════════════════
+  postgres:
+    image: postgres:16-alpine
+    container_name: xhi-production-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: xhi_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-xhi_secret_2026}
+      POSTGRES_DB: xhi_leads
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=768MB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=1310kB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+      -c synchronous_commit=on
+      -c wal_level=logical
+    volumes:
+      - pg_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xhi_admin -d xhi_leads"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - xhi-prod-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Redis Master/Replica Cluster
+  # ═══════════════════════════════════════════════════════════════════════════
+  redis-master:
+    image: bitnami/redis:7.2
+    container_name: xhi-prod-redis-master
+    restart: always
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-xhi_redis_2026}
+      REDIS_REPLICATION_MODE: master
+      REDIS_MAXMEMORY: 512mb
+      REDIS_MAXMEMORY_POLICY: noeviction
+    volumes:
+      - redis_prod_master_data:/bitnami/redis/data
+    networks:
+      - xhi-prod-network
+
+  redis-replica:
+    image: bitnami/redis:7.2
+    container_name: xhi-prod-redis-replica
+    restart: always
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-xhi_redis_2026}
+      REDIS_REPLICATION_MODE: replica
+      REDIS_MASTER_HOST: redis-master
+      REDIS_MASTER_PASSWORD: ${REDIS_PASSWORD:-xhi_redis_2026}
+    volumes:
+      - redis_prod_replica_data:/bitnami/redis/data
+    networks:
+      - xhi-prod-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Redis Bootstrapper
+  # ═══════════════════════════════════════════════════════════════════════════
+  redis-init:
+    image: bitnami/redis:7.2
+    container_name: xhi-prod-redis-init
+    depends_on:
+      - redis-master
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-xhi_redis_2026}
+    command: >
+      sh -c "
+      until redis-cli -h redis-master ping; do sleep 1; done;
+      echo 'Redis is up. Initializing production streams...';
+      redis-cli -h redis-master XGROUP CREATE comment_stream lead_processor_group 0 MKSTREAM || true;
+      redis-cli -h redis-master XADD comment_stream MAXLEN ~ 100000 * init_key init_val;
+      "
+    networks:
+      - xhi-prod-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Lead Processor (Batch Ingestion Worker)
+  # ═══════════════════════════════════════════════════════════════════════════
+  lead-processor:
+    build:
+      context: .
+      dockerfile: services/lead-processor/Dockerfile
+    container_name: xhi-prod-lead-processor
+    restart: always
+    environment:
+      NODE_ENV: production
+      REDIS_HOST: redis-master
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-xhi_redis_2026}
+      DATABASE_URL: postgresql://xhi_admin:${POSTGRES_PASSWORD:-xhi_secret_2026}@postgres:5432/xhi_leads?schema=public
+      BATCH_SIZE: 500
+      FLUSH_INTERVAL_MS: 3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-master:
+        condition: service_started
+    networks:
+      - xhi-prod-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # API Gateway (WebSockets / Proxy)
+  # ═══════════════════════════════════════════════════════════════════════════
+  api-gateway:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: xhi-prod-api-gateway
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      REDIS_HOST: redis-master
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-xhi_redis_2026}
+    networks:
+      - xhi-prod-network
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # NGINX — Edge Router
+  # ═══════════════════════════════════════════════════════════════════════════
+  nginx:
+    image: nginx:alpine
+    container_name: xhi-prod-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api-gateway
+      - lead-processor
+    networks:
+      - xhi-prod-network
+
+volumes:
+  pg_prod_data:
+  redis_prod_master_data:
+  redis_prod_replica_data:
+
+networks:
+  xhi-prod-network:
+    driver: bridge

@@ -8,10 +8,12 @@
  *  - FAB (Floating Action Button) for instant Quick Start / Sync actions.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { PlayCircle, Link, Activity, Phone, ShieldCheck, AlertTriangle, ArrowLeft } from 'lucide-react';
 import Plot from 'react-plotly.js';
+import { FixedSizeList as List } from 'react-window';
+import throttle from 'lodash.throttle';
 
 interface SocketLeadPayload {
   id: string;
@@ -29,6 +31,21 @@ export const LiveDetails: React.FC<{ sessionId: string }> = ({ sessionId }) => {
   const [cpl, setCpl] = useState(0);
   const [spend, setSpend] = useState(0);
 
+  // Throttled Buffer for High-Speed Streams
+  const bufferRef = useRef<SocketLeadPayload[]>([]);
+
+  // 1. Throttle logic ensuring React only repaints every 500ms regardless of lead velocity
+  const flushThrottledBuffer = useCallback(
+    throttle(() => {
+      if (bufferRef.current.length > 0) {
+        setSessionLeads(prev => [...bufferRef.current, ...prev]);
+        setSpend(prev => prev + (bufferRef.current.length * 1.5));
+        bufferRef.current = []; // Wipe applied buffer
+      }
+    }, 500),
+    []
+  );
+
   // Connection
   useEffect(() => {
     const s = io(import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:3000');
@@ -36,32 +53,50 @@ export const LiveDetails: React.FC<{ sessionId: string }> = ({ sessionId }) => {
     // Simulating API loading state on component mount
     setTimeout(() => setIsLoading(false), 1200);
 
-    // Initial state simulation (e.g. from /api/sessions/:id)
     setCpl(1.24);
     setSpend(320);
 
     s.on('leads:live_update', (data: { leads: SocketLeadPayload[] }) => {
-      // 1. WebSocket isolation requirement 
-      // Filter the ticker so we only see leads created inside THIS specific live
       const incomingForThisSession = data.leads.filter(l => l.sessionId === sessionId);
       
       if (incomingForThisSession.length > 0) {
-        setSessionLeads(prev => [...incomingForThisSession, ...prev].slice(0, 100)); // Keep max 100
-        
-        // Mock update metrics based on simulated payload rates
-        setSpend(prev => prev + (incomingForThisSession.length * 1.5)); // Burn simulation
+        // Drop into background buffer, apply throttle loop
+        bufferRef.current.push(...incomingForThisSession);
+        flushThrottledBuffer();
       }
     });
 
-    return () => { s.disconnect(); };
-  }, [sessionId]);
+    return () => { 
+      s.disconnect(); 
+      flushThrottledBuffer.cancel();
+    };
+  }, [sessionId, flushThrottledBuffer]);
 
-  // Recalculate dynamic tracking variable 
   useEffect(() => {
     if (sessionLeads.length > 0) {
-      setCpl(spend / (sessionLeads.length + 258)); // 258 base simulation leads
+      setCpl(spend / (sessionLeads.length + 258)); 
     }
   }, [spend, sessionLeads.length]);
+
+  // 2. React-Window Virtualized Row Component
+  const VirtualTickerRow = ({ index, style }: { index: number, style: React.CSSProperties }) => {
+    const lead = sessionLeads[index];
+    if (!lead) return null;
+
+    return (
+      <div style={style} className={`flex border-b border-gray-800/50 hover:bg-gray-800/80 transition-colors ${index === 0 ? 'animate-pulse-once bg-blue-900/10' : ''}`}>
+        <div className="p-4 w-1/4 text-xs text-gray-500 my-auto">{new Date().toLocaleTimeString()}</div>
+        <div className="p-4 w-2/4 text-blue-400 font-bold my-auto truncate">{lead.phoneNumber}</div>
+        <div className="p-4 w-1/4 uppercase font-mono text-gray-400 my-auto truncate">{lead.platform}</div>
+        <div className="p-4 w-1/4 mx-auto my-auto flex items-center justify-center gap-2 font-mono">
+          {lead.confidenceScore > 0.8 ? <ShieldCheck className="text-green-500" size={16}/> : <AlertTriangle className="text-yellow-500" size={16} />}
+          <span className={lead.confidenceScore > 0.8 ? 'text-green-500' : 'text-yellow-500'}>
+              {(lead.confidenceScore * 100).toFixed(0)}%
+          </span>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-black text-gray-200 flex flex-col font-sans p-6 overflow-hidden">
@@ -134,60 +169,51 @@ export const LiveDetails: React.FC<{ sessionId: string }> = ({ sessionId }) => {
           </section>
         )}
 
-        {/* BOTTOM HALF: Isolated Web-Socket Ticker */}
+        {/* BOTTOM HALF: Isolated Web-Socket Ticker (Virtualized) */}
         <section className="flex-1 bg-gray-900 border border-gray-800 rounded-xl flex flex-col overflow-hidden relative">
           <div className="p-4 border-b border-gray-800 flex justify-between items-center shrink-0">
             <h3 className="font-semibold text-white flex items-center gap-2">
-              <Phone size={18} className="text-blue-500" /> Isolated Lead Stream
+              <Phone size={18} className="text-blue-500" /> Isolated Lead Stream (Live: {sessionLeads.length})
             </h3>
           </div>
-          <div className="flex-1 overflow-auto bg-black/20 pb-20">
-            <table className="w-full text-left text-sm text-gray-400 font-mono">
-              <thead className="bg-gray-900/80 sticky top-0 backdrop-blur-md z-10">
-                <tr>
-                  <th className="p-4 font-medium">Capture Time</th>
-                  <th className="p-4 font-medium text-white">Extracted Phone</th>
-                  <th className="p-4 font-medium uppercase text-xs">Platform</th>
-                  <th className="p-4 font-medium text-center">Confidence</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800">
-                {isLoading ? (
+          
+          {/* Virtualized Table Header */}
+          <div className="flex bg-gray-900/80 sticky top-0 z-10 font-bold border-b border-gray-800 shadow text-gray-500 text-sm p-4 w-full pr-[15px]"> 
+              <div className="w-1/4">Capture Time</div>
+              <div className="w-2/4 text-white">Extracted Phone</div>
+              <div className="w-1/4">Platform</div>
+              <div className="w-1/4 text-center">Confidence</div>
+          </div>
+
+          <div className="flex-1 bg-black/20">
+               {isLoading ? (
                   Array.from({length: 4}).map((_, i) => (
-                    <tr key={i} className="animate-pulse">
-                      <td className="p-4"><div className="h-4 bg-gray-800 w-16 rounded"/></td>
-                      <td className="p-4"><div className="h-4 bg-blue-900/30 w-32 rounded"/></td>
-                      <td className="p-4"><div className="h-4 bg-gray-800 w-8 rounded"/></td>
-                      <td className="p-4"><div className="h-4 bg-gray-800 w-12 rounded mx-auto"/></td>
-                    </tr>
+                    <div key={i} className="flex animate-pulse p-4 border-b border-gray-800">
+                      <div className="w-1/4"><div className="h-4 bg-gray-800 w-16 rounded"/></div>
+                      <div className="w-2/4"><div className="h-4 bg-blue-900/30 w-32 rounded"/></div>
+                      <div className="w-1/4"><div className="h-4 bg-gray-800 w-8 rounded"/></div>
+                      <div className="w-1/4"><div className="h-4 bg-gray-800 w-12 rounded mx-auto"/></div>
+                    </div>
                   ))
                 ) : sessionLeads.length === 0 ? (
-                  <tr><td colSpan={4} className="p-8 text-center text-gray-600 font-sans">No leads detected in the current buffer view.</td></tr>
+                  <div className="p-8 text-center text-gray-600 font-sans">No leads detected in the current buffer view.</div>
                 ) : (
-                  sessionLeads.map((lead, idx) => (
-                    <tr key={`${lead.id}-${idx}`} className="hover:bg-gray-800/80 transition-colors animate-pulse-once">
-                      <td className="p-4 text-xs text-gray-500">{new Date().toLocaleTimeString()}</td>
-                      <td className="p-4 text-blue-400 font-bold">{lead.phoneNumber}</td>
-                      <td className="p-4 uppercase">{lead.platform}</td>
-                      <td className="p-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          {lead.confidenceScore > 0.8 ? <ShieldCheck className="text-green-500" size={16}/> : <AlertTriangle className="text-yellow-500" size={16} />}
-                          <span className={lead.confidenceScore > 0.8 ? 'text-green-500' : 'text-yellow-500'}>
-                             {(lead.confidenceScore * 100).toFixed(0)}%
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                  <List
+                    height={400}             // Fallback height, ideally dynamic via AutoSizer in prod
+                    itemCount={sessionLeads.length}
+                    itemSize={65}            // Height of custom row div 
+                    width="100%"
+                    className="custom-scrollbar"
+                  >
+                    {VirtualTickerRow}
+                  </List>
                 )}
-              </tbody>
-            </table>
           </div>
         </section>
 
       </div>
 
-      {/* FLOATING ACTION BUTTON (FAB) PANEL: Quick Start / Sync Ads */}
+      {/* FLOATING ACTION BUTTON (FAB) PANEL */}
       <div className="fixed bottom-8 right-8 flex flex-col items-end gap-3 z-50">
          <button className="flex items-center gap-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white p-3 pr-4 rounded-full shadow-2xl transition-all transform hover:-translate-y-1">
            <div className="bg-gray-700 p-2 rounded-full"><Link size={18} /></div>
