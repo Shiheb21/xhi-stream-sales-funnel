@@ -8,7 +8,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@xhi/database": "workspace:*",
+    "@xhi/database": "1.0.0",
     "fastify": "^4.26.2",
     "dotenv": "^16.4.5",
     "json2csv": "^6.0.0-alpha.2",

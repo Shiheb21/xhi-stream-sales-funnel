@@ -1,0 +1,15 @@
+/// <reference types="vite/client" />
+
+interface ImportMetaEnv {
+  readonly VITE_API_BASE_URL: string;
+  readonly VITE_WS_URL: string;
+  readonly VITE_API_GATEWAY_URL: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+
+declare module 'react-plotly.js';
+declare module 'react-window';
+declare module 'lodash.throttle';

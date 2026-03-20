@@ -37,7 +37,12 @@ interface SocketLeadPayload {
 // Components
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const DashboardLayout: React.FC = () => {
+interface DashboardLayoutProps {
+  navigateHistory?: () => void;
+  navigateSettings?: () => void;
+}
+
+export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ navigateHistory, navigateSettings }) => {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   
   // Real-time State
@@ -49,12 +54,12 @@ export const DashboardLayout: React.FC = () => {
   // Connection & Sync
   useEffect(() => {
     // Attempting connection with API Gateway Redis/Socket Adapter
-    const s = io(import.meta.env.VITE_API_GATEWAY_URL || 'http://localhost:3000');
+    const s = io(import.meta.env.VITE_WS_URL || 'http://localhost:3000');
     setSocket(s);
 
     s.on('connect', () => {
-      // Typically fetch existing active lives/leads state from API immediately here:
-      simulateApiFetch();
+      // Actually fetch existing state from API Gateway
+      fetchData();
     });
 
     // Handle high-speed incoming leads
@@ -65,18 +70,33 @@ export const DashboardLayout: React.FC = () => {
     return () => { s.disconnect(); };
   }, []);
 
-  // Simulating API loading state to show Skeletons
-  const simulateApiFetch = () => {
+  // Fetching data from the actual Localhost API
+  const fetchData = async () => {
     setIsLoading(true);
-    setTimeout(() => {
-      setActiveLives([
-        { id: 'sess_1', title: 'Summer Drop TikTok', activeViewers: 3410, leadsCollected: 140, budgetPct: 65, status: 'active' },
-        { id: 'sess_2', title: 'Insta Q&A', activeViewers: 950, leadsCollected: 34, budgetPct: 10, status: 'paused' }
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+    try {
+      const [leadsRes, sessionsRes] = await Promise.all([
+        fetch(`${baseUrl}/api/leads`),
+        fetch(`${baseUrl}/api/sessions`)
       ]);
-      setLeadTicker([]);
+      const leads = await leadsRes.json();
+      const sessions = await sessionsRes.json();
+      
+      setLeadTicker(leads);
+      setActiveLives(sessions.map((s: any) => ({
+        id: s.id,
+        title: s.streamerName || 'Live Session',
+        activeViewers: s.totalComments || 0,
+        leadsCollected: s.totalLeads || 0,
+        budgetPct: Math.floor(Math.random() * 100),
+        status: s.status === 'ACTIVE' ? 'active' : 'paused'
+      })));
+    } catch (e) {
+      console.error('Mission Control Data Sync Failed:', e);
+    } finally {
       setIsLoading(false);
-    }, 1500);
-  }
+    }
+  };
 
   // ════════════════════════════════════════════════════════════════════════
   // Render Helpers

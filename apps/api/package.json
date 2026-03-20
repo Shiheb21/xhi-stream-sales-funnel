@@ -1,5 +1,5 @@
 {
-  "name": "@xhi/api-gateway",
+  "name": "@xhi/api",
   "version": "1.0.0",
   "private": true,
   "main": "src/index.ts",
@@ -10,9 +10,13 @@
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",
+    "@xhi/database": "1.0.0",
+    "@xhi/export-engine": "1.0.0",
     "fastify": "^4.26.2",
+    "@fastify/cors": "^9.0.1",
     "ioredis": "^5.10.1",
-    "socket.io": "^4.8.3"
+    "socket.io": "^4.8.3",
+    "winston": "^3.11.0"
   },
   "devDependencies": {
     "@types/node": "^20.12.0",

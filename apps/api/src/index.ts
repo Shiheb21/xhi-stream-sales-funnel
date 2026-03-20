@@ -14,11 +14,25 @@ import { Redis } from 'ioredis';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 
+import cors from '@fastify/cors';
+
 // Initialize Fastify
 const app = Fastify({ logger: true });
 
+// 1. CORS Hardening - Allow Visual Frontend access
+app.register(cors, {
+  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+});
+
 // Basic health check route
 app.get('/health', async () => ({ status: 'healthy', service: 'api-gateway' }));
+
+// Global Error Handler to prevent process exits on DB flickers
+app.setErrorHandler((error, request, reply) => {
+  app.log.error(error);
+  reply.status(500).send({ error: 'Internal API Flicker', message: error.message });
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WebSocket Sync Configuration
@@ -153,12 +167,12 @@ app.get('/export/:sessionId', async (req, reply) => {
   // 3. Google Sheet Realtime Auth Push Logic
   if (format === 'gsheet') {
     // Requires User Configuration
-    const userConfig = await prisma.userConfig.findFirst();
-    if (!userConfig || !userConfig.gsheetId) {
+    const userSettings = await prisma.userSettings.findFirst();
+    if (!userSettings || !userSettings.gsheetId) {
       return reply.code(400).send({ error: 'No linked Google Spreadsheet ID on User Settings' });
     }
     
-    await syncGoogleSheets(leads, userConfig.gsheetId);
+    await syncGoogleSheets(leads, userSettings.gsheetId);
     return { status: 'Synced success to Google Sheets', leadCount: leads.length };
   }
 
@@ -197,6 +211,33 @@ app.get('/export/:sessionId', async (req, reply) => {
   }
 
   return reply.code(400).send({ error: 'Invalid format requested' });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Visual Data Routes (for Dashboard Sync)
+// ═══════════════════════════════════════════════════════════════════════════
+
+app.get('/api/leads', async (req, reply) => {
+  try {
+    const leads = await prisma.lead.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 200 // Prevent frontend overload
+    });
+    return leads;
+  } catch (e: any) {
+    return reply.status(500).send({ error: 'Failed to fetch leads from Postgres' });
+  }
+});
+
+app.get('/api/sessions', async (req, reply) => {
+  try {
+    const sessions = await prisma.liveSession.findMany({
+      orderBy: { startedAt: 'desc' }
+    });
+    return sessions;
+  } catch (e: any) {
+    return reply.status(500).send({ error: 'Failed to fetch sessions' });
+  }
 });
 
 const start = async () => {
